@@ -91,7 +91,19 @@
                     </div>
 
                     <div class="card">
-                        <h3>Hosts & OSDs</h3>
+                        <h3>Hosts & OSDs Management</h3>
+                        <div class="osd-controls">
+                            <div class="filter-group">
+                                <label>Filter by Host:</label>
+                                <select id="host-filter">
+                                    <option value="">All Hosts</option>
+                                </select>
+                            </div>
+                            <div class="status-legend">
+                                <span class="legend-item"><span class="status-badge status-in">●</span> In (Active)</span>
+                                <span class="legend-item"><span class="status-badge status-out">●</span> Out (Down)</span>
+                            </div>
+                        </div>
                         <div id="osds-list" class="osds-list"></div>
                     </div>
                 </div>
@@ -126,7 +138,14 @@
                 <!-- Disk Management Page -->
                 <div id="disks" class="page">
                     <div class="card">
+                        <h3>OSD & Disk Information</h3>
+                        <p style="color: #7f8c8d; font-size: 14px; margin-bottom: 16px;">View all OSDs with their assigned nodes and disk paths</p>
+                        <div id="osd-disk-info" class="osd-disk-grid"></div>
+                    </div>
+
+                    <div class="card">
                         <h3>Clean OSD Disk</h3>
+                        <p style="color: #7f8c8d; font-size: 14px; margin-bottom: 16px;">⚠️ Warning: This will completely wipe the selected disk. Make sure to select the correct disk!</p>
                         <div class="disk-control">
                             <div class="form-group">
                                 <label>Node:</label>
@@ -138,25 +157,28 @@
                                 <label>Disk Path:</label>
                                 <input type="text" id="clean-disk" placeholder="e.g., /dev/sdb">
                             </div>
-                            <button id="clean-btn" class="btn btn-danger">Clean & Wipe Disk</button>
+                            <button id="clean-btn" class="btn btn-danger">🗑️ Clean & Wipe Disk</button>
                         </div>
                         <div id="clean-results" class="discovery-output"></div>
                     </div>
 
                     <div class="card">
                         <h3>Safe OSD Purge</h3>
+                        <p style="color: #7f8c8d; font-size: 14px; margin-bottom: 16px;">⚠️ Warning: This will safely remove the OSD from the cluster. This operation cannot be undone!</p>
                         <div class="disk-control">
                             <div class="form-group">
                                 <label>OSD ID:</label>
-                                <input type="number" id="purge-osd-id" placeholder="e.g., 0" min="0">
+                                <select id="purge-osd-id" class="form-group">
+                                    <option value="">Select OSD to purge...</option>
+                                </select>
                             </div>
                             <div class="form-group">
                                 <label>
                                     <input type="checkbox" id="purge-force">
-                                    Force Purge
+                                    Force Purge (skip safety checks)
                                 </label>
                             </div>
-                            <button id="purge-btn" class="btn btn-danger">Purge OSD</button>
+                            <button id="purge-btn" class="btn btn-danger">⚡ Purge OSD</button>
                         </div>
                         <div id="purge-results" class="discovery-output"></div>
                     </div>

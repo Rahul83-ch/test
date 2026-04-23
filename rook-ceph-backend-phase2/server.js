@@ -241,11 +241,17 @@ app.get("/api/osds", async (req, res) => {
           class: parts[1],
           weight: parts[2],
           name: parts[3],
-          status: parts[4],
+
+          status: parts[4],   // up / down
+
+          in_out:
+            (parts[5] === "0" || parts[5] === "0.00000")
+              ? "out"
+              : "in",
+
           reweight: parts[5],
           pri_aff: parts[6]
         };
-
         hosts[currentHost].osds.push(osdData);
         hosts[currentHost].total_osds += 1;
       }
@@ -743,12 +749,30 @@ echo "=================================="
     const podName = pod.metadata.name;
 
     // wait job complete
-    await new Promise(r => setTimeout(r, 12000));
+  let completed = false;
+  let attempts = 0;
 
-    const logs = await core.readNamespacedPodLog({
+  while (!completed && attempts < 30) {
+    const podStatus = await core.readNamespacedPod({
       name: podName,
       namespace: ns
     });
+
+    const phase = podStatus.status.phase;
+
+    if (phase === "Succeeded" || phase === "Failed") {
+      completed = true;
+      break;
+    }
+
+    await new Promise(r => setTimeout(r, 2000));
+    attempts++;
+  }
+
+  const logs = await core.readNamespacedPodLog({
+    name: podName,
+    namespace: ns
+  });
 
     res.json({
       status: "success",
@@ -785,78 +809,107 @@ app.post("/api/osd/purge-safe", async (req, res) => {
   try {
     logs.push(`Starting SAFE purge for OSD ${osdId}`);
 
-    // STEP 1 - CHECK OSD EXISTS
-    const find = await execInToolbox(`ceph osd find ${osdId}`);
+    // =========================
+    // STEP 0 - FORCE: CLEAN K8S FIRST
+    // =========================
+    if (force) {
+      logs.push("FORCE mode enabled → cleaning Kubernetes deployment first");
 
-    if (!find.stdout || find.stdout.includes("does not exist")) {
-      return res.status(404).json({
-        status: "failed",
-        error: "OSD not found",
-        logs
-      });
-    }
-
-    logs.push("OSD found");
-
-    // STEP 2 - TREE CHECK
-    const tree = await execInToolbox("ceph osd tree");
-    logs.push("Fetched OSD tree");
-
-    const isUp =
-      tree.stdout.includes(`osd.${osdId}`) &&
-      tree.stdout.includes("up");
-
-    // STEP 3 - OUT
-    if (isUp) {
-      logs.push("OSD active -> marking OUT");
-
-      await execInToolbox(`ceph osd out ${osdId}`);
-
-      logs.push("OSD marked OUT");
-    }
-
-    // STEP 4 - FIND + DELETE DEPLOYMENT
-    logs.push(`Searching deployment for OSD ${osdId}`);
-
-    try {
-      const depList = await apps.listNamespacedDeployment({
-        namespace: ns
-      });
-
-      const dep = depList.items.find(d =>
-        d.metadata.name.includes(`osd-${osdId}`)
-      );
-
-      if (dep) {
-        await apps.deleteNamespacedDeployment({
-          name: dep.metadata.name,
+      try {
+        const depList = await apps.listNamespacedDeployment({
           namespace: ns
         });
 
-        logs.push(`Deployment deleted: ${dep.metadata.name}`);
-      } else {
-        logs.push("No deployment found for this OSD");
+        const dep = depList.items.find(d =>
+          d.metadata.name.includes(`osd-${osdId}`)
+        );
+
+        if (dep) {
+          await apps.deleteNamespacedDeployment({
+            name: dep.metadata.name,
+            namespace: ns
+          });
+
+          logs.push(`Deployment deleted: ${dep.metadata.name}`);
+        } else {
+          logs.push("No deployment found for this OSD");
+        }
+
+      } catch (err) {
+        logs.push(`Deployment cleanup error: ${err.message}`);
       }
 
-    } catch (err) {
-      logs.push(`Deployment delete failed: ${err.message}`);
+      logs.push("Waiting 5 sec after deployment cleanup...");
+      await sleep(5000);
     }
 
-    // STEP 5 - WAIT
-    logs.push("Waiting 10 sec after deployment delete...");
-    await sleep(10000);
+    // =========================
+    // STEP 1 - CHECK OSD IN CEPH (SAFE CHECK)
+    // =========================
+    let osdExists = false;
 
-    // STEP 6 - DOWN
+    try {
+      const find = await execInToolbox(`ceph osd find ${osdId}`);
+      osdExists =
+        !!find.stdout &&
+        !find.stdout.includes("does not exist");
+    } catch (err) {
+      osdExists = false;
+      logs.push("Ceph osd find failed (treating as not found)");
+    }
+
+    if (!osdExists) {
+      logs.push("OSD not found in Ceph");
+
+      if (!force) {
+        return res.status(404).json({
+          status: "failed",
+          error: "OSD not found",
+          logs
+        });
+      }
+
+      logs.push("Force mode → continuing cleanup without Ceph dependency");
+    } else {
+      logs.push("OSD found in Ceph");
+
+      // =========================
+      // STEP 2 - GET OSD TREE
+      // =========================
+      const tree = await execInToolbox("ceph osd tree");
+      logs.push("Fetched OSD tree");
+
+      const isUp =
+        tree.stdout.includes(`osd.${osdId}`) &&
+        tree.stdout.includes("up");
+
+      // =========================
+      // STEP 3 - MARK OUT
+      // =========================
+      if (isUp) {
+        logs.push("OSD active → marking OUT");
+
+        await execInToolbox(`ceph osd out ${osdId}`);
+
+        logs.push("OSD marked OUT");
+      }
+    }
+
+    // =========================
+    // STEP 4 - MARK DOWN (SAFE)
+    // =========================
     logs.push("Marking OSD DOWN");
 
     try {
       await execInToolbox(`ceph osd down ${osdId}`);
       logs.push("OSD marked DOWN");
     } catch (err) {
-      logs.push("OSD already DOWN or command skipped");
+      logs.push("OSD already DOWN or not present");
     }
 
-    // STEP 7 - FINAL CHECK
+    // =========================
+    // STEP 5 - FINAL CHECK
+    // =========================
     const finalCheck = await execInToolbox("ceph osd tree");
 
     const stillUp =
@@ -872,10 +925,12 @@ app.post("/api/osd/purge-safe", async (req, res) => {
     }
 
     if (stillUp && force) {
-      logs.push("Force mode enabled -> continuing purge");
+      logs.push("Force mode enabled → continuing purge");
     }
 
-    // STEP 8 - PURGE
+    // =========================
+    // STEP 6 - PURGE
+    // =========================
     logs.push("Purging OSD");
 
     const purge = await execInToolbox(

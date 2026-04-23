@@ -1,7 +1,9 @@
 // API Configuration
-const API_BASE_URL = window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1')
-    ? 'http://localhost:3000'
-    : `http://${window.location.hostname}:3000`;
+// Try to get from environment or use defaults
+let API_BASE_URL = 'http://localhost:3000'; // Default
+
+
+console.log('API Base URL:', API_BASE_URL);
 
 // State Management
 const state = {
@@ -26,18 +28,15 @@ navItems.forEach(item => {
 
 function showPage(pageName) {
     state.currentPage = pageName;
-    
-    // Update active nav item
+
     navItems.forEach(item => {
         item.classList.toggle('active', item.dataset.page === pageName);
     });
-    
-    // Update active page
+
     pages.forEach(page => {
         page.classList.toggle('active', page.id === pageName);
     });
-    
-    // Update title
+
     const titleMap = {
         dashboard: 'Dashboard',
         osds: 'OSDs Management',
@@ -45,10 +44,9 @@ function showPage(pageName) {
         disks: 'Disk Management',
         operators: 'Operator Management'
     };
-    
+
     document.getElementById('page-title').textContent = titleMap[pageName] || 'Dashboard';
-    
-    // Load page data
+
     loadPageData(pageName);
 }
 
@@ -61,17 +59,15 @@ async function apiCall(endpoint, method = 'GET', body = null) {
                 'Content-Type': 'application/json'
             }
         };
-        
-        if (body) {
-            options.body = JSON.stringify(body);
-        }
-        
+
+        if (body) options.body = JSON.stringify(body);
+
         const response = await fetch(`${API_BASE_URL}${endpoint}`, options);
-        
+
         if (!response.ok) {
             throw new Error(`API Error: ${response.status}`);
         }
-        
+
         return await response.json();
     } catch (error) {
         console.error('API Error:', error);
@@ -96,7 +92,7 @@ function setApiStatus(connected) {
     state.apiConnected = connected;
     const statusDot = apiStatus.querySelector('.status-dot');
     const statusText = apiStatus.querySelector('span');
-    
+
     if (connected) {
         statusDot.classList.remove('error');
         statusDot.classList.add('connected');
@@ -113,20 +109,20 @@ function showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
-    
+
     const iconMap = {
         success: '✓',
         error: '✕',
         info: 'ℹ'
     };
-    
+
     toast.innerHTML = `
         <span class="icon">${iconMap[type]}</span>
         <span>${message}</span>
     `;
-    
+
     container.appendChild(toast);
-    
+
     setTimeout(() => {
         toast.style.animation = 'slideIn 0.3s ease reverse';
         setTimeout(() => toast.remove(), 300);
@@ -134,16 +130,15 @@ function showToast(message, type = 'info') {
 }
 
 // Load Page Data
-async function loadPageData(page) {
-    if (page === 'dashboard') {
-        loadDashboard();
-    } else if (page === 'osds') {
-        loadOsds();
-    } else if (page === 'nodes') {
-        loadNodes();
-    } else if (page === 'disks') {
-        loadDisks();
-    }
+function loadPageData(page) {
+    if (page === 'dashboard') loadDashboard();
+    else if (page === 'osds') loadOsds();
+    else if (page === 'nodes') loadNodes();
+    else if (page === 'disks') {
+    loadDisks();
+    loadPurgeOsds();   // ✅ ADD THIS LINE
+}
+
 }
 
 // Dashboard
@@ -154,11 +149,12 @@ async function loadDashboard() {
             showToast('Failed to load dashboard data', 'error');
             return;
         }
-        
+
         updateClusterHealth(health);
         updateStorageStats(health);
         updateServicesStatus(health);
         updateRecoveryStatus(health);
+
     } catch (error) {
         showToast('Error loading dashboard: ' + error.message, 'error');
     }
@@ -168,15 +164,20 @@ function updateClusterHealth(data) {
     const cluster = data.cluster;
     const healthStatus = document.getElementById('cluster-health');
     const healthDetails = document.getElementById('health-details');
-    
+
     const isHealthy = cluster.health === 'HEALTH_OK';
-    const statusClass = cluster.health === 'HEALTH_OK' ? 'healthy' : cluster.health === 'HEALTH_WARN' ? 'warning' : 'error';
-    
+    const statusClass =
+        cluster.health === 'HEALTH_OK'
+            ? 'healthy'
+            : cluster.health === 'HEALTH_WARN'
+            ? 'warning'
+            : 'error';
+
     healthStatus.innerHTML = `
         <div class="status-circle ${statusClass}">${isHealthy ? '✓' : '⚠'}</div>
         <span>${cluster.health}</span>
     `;
-    
+
     healthDetails.innerHTML = `
         <div class="detail-row">
             <span class="detail-label">Cluster ID:</span>
@@ -188,163 +189,173 @@ function updateClusterHealth(data) {
 function updateStorageStats(data) {
     const storage = data.storage;
     const statsGrid = document.getElementById('storage-stats');
-    
+
     statsGrid.innerHTML = `
-        <div class="stat-box">
-            <div class="stat-value">${storage.pools}</div>
-            <div class="stat-label">Pools</div>
-        </div>
-        <div class="stat-box" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
-            <div class="stat-value">${storage.placement_groups}</div>
-            <div class="stat-label">Placement Groups</div>
-        </div>
-        <div class="stat-box" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
-            <div class="stat-value">${storage.objects}</div>
-            <div class="stat-label">Objects</div>
-        </div>
-        <div class="stat-box" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);">
-            <div class="stat-value">${storage.usage}</div>
-            <div class="stat-label">Usage</div>
-        </div>
+        <div class="stat-box"><div class="stat-value">${storage.pools}</div><div class="stat-label">Pools</div></div>
+        <div class="stat-box"><div class="stat-value">${storage.placement_groups}</div><div class="stat-label">Placement Groups</div></div>
+        <div class="stat-box"><div class="stat-value">${storage.objects}</div><div class="stat-label">Objects</div></div>
+        <div class="stat-box"><div class="stat-value">${storage.usage}</div><div class="stat-label">Usage</div></div>
     `;
 }
 
 function updateServicesStatus(data) {
     const services = data.services;
     const servicesGrid = document.getElementById('services-status');
-    
+
     servicesGrid.innerHTML = `
-        <div class="service-item">
-            <div class="service-name">🖥️ Monitors</div>
-            <div class="service-status">${services.monitors} daemons running</div>
-        </div>
-        <div class="service-item">
-            <div class="service-name">⚙️ Manager</div>
-            <div class="service-status">${services.manager || 'N/A'}</div>
-        </div>
-        <div class="service-item">
-            <div class="service-name">📁 Metadata Server</div>
-            <div class="service-status">${services.metadata_server || 'N/A'}</div>
-        </div>
-        <div class="service-item">
-            <div class="service-name">💾 Object Storage Daemons</div>
-            <div class="service-status">${services.osds.up}/${services.osds.total} up</div>
-        </div>
+        <div class="service-item"><div class="service-name">🖥️ Monitors</div><div class="service-status">${services.monitors}</div></div>
+        <div class="service-item"><div class="service-name">⚙️ Manager</div><div class="service-status">${services.manager}</div></div>
+        <div class="service-item"><div class="service-name">💾 OSDs</div><div class="service-status">${services.osds.up}/${services.osds.total} up</div></div>
     `;
 }
 
 function updateRecoveryStatus(data) {
     const recovery = data.recovery;
     const recoveryStatus = document.getElementById('recovery-status');
-    
-    const degraded = recovery.degraded === 'None' ? null : recovery.degraded;
-    const misplaced = recovery.misplaced === 'None' ? null : recovery.misplaced;
-    
-    let html = '';
-    if (!degraded && !misplaced) {
-        html = '<div class="recovery-item">✓ No recovery needed - cluster is healthy</div>';
-    } else {
-        if (degraded) {
-            html += `<div class="recovery-item warning">⚠️ Degraded: ${degraded}</div>`;
-        }
-        if (misplaced) {
-            html += `<div class="recovery-item warning">⚠️ Misplaced: ${misplaced}</div>`;
-        }
-    }
-    
-    recoveryStatus.innerHTML = html;
+
+    recoveryStatus.innerHTML = `
+        <div class="recovery-item">
+            Degraded: ${recovery.degraded} | Misplaced: ${recovery.misplaced}
+        </div>
+    `;
 }
 
+// =========================
 // OSDs
+// =========================
 async function loadOsds() {
     try {
         const osds = await apiCall('/api/osds');
+
         if (!osds || osds.status !== 'success') {
             showToast('Failed to load OSDs', 'error');
             return;
         }
-        
+
         const summary = osds.summary;
-        const summaryHtml = document.getElementById('osds-summary');
-        
-        summaryHtml.innerHTML = `
+        document.getElementById('osds-summary').innerHTML = `
             <div class="stat-box">
                 <div class="stat-value">${summary.total_hosts}</div>
                 <div class="stat-label">Total Hosts</div>
             </div>
-            <div class="stat-box" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+            <div class="stat-box">
                 <div class="stat-value">${summary.total_osds}</div>
                 <div class="stat-label">Total OSDs</div>
             </div>
         `;
-        
-        // Build OSD List
-        const osdsList = document.getElementById('osds-list');
-        let html = '';
-        
-        for (const [hostName, hostData] of Object.entries(osds.hosts)) {
-            html += `
-                <div class="host-group">
-                    <div class="host-header">
-                        <span>🖥️ ${hostName}</span>
-                        <span>${hostData.total_osds} OSDs</span>
-                    </div>
-            `;
-            
-            for (const osd of hostData.osds) {
-                html += `
-                    <div class="osd-item">
-                        <div class="osd-info">
-                            <div class="osd-name">OSD ${osd.osd_id}</div>
-                            <div class="osd-details">
-                                Weight: ${osd.weight} | Status: ${osd.status} | Reweight: ${osd.reweight}
-                            </div>
-                        </div>
-                        <div class="osd-actions">
-                            <button class="btn btn-primary btn-small" onclick="toggleOsdStatus(${osd.osd_id}, '${osd.status}')">
-                                ${osd.status === 'up' ? '⬇️ Out' : '⬆️ In'}
-                            </button>
-                        </div>
-                    </div>
-                `;
-            }
-            
-            html += '</div>';
+
+        const hostFilter = document.getElementById('host-filter');
+
+        if (hostFilter) {
+            let options = `<option value="">All Hosts</option>`;
+
+            Object.keys(osds.hosts).forEach(host => {
+                options += `<option value="${host}">${host}</option>`;
+            });
+
+            hostFilter.innerHTML = options;
+
+            hostFilter.onchange = () => {
+                renderOsdsList(osds.hosts, hostFilter.value);
+            };
         }
-        
-        osdsList.innerHTML = html;
+
+        renderOsdsList(osds.hosts);
+
     } catch (error) {
         showToast('Error loading OSDs: ' + error.message, 'error');
     }
 }
 
-async function toggleOsdStatus(osdId, currentStatus) {
+function renderOsdsList(hosts, filterHost = '') {
+    const osdsList = document.getElementById('osds-list');
+    let html = '';
+
+    for (const [hostName, hostData] of Object.entries(hosts)) {
+
+        if (filterHost && hostName !== filterHost) continue;
+
+        html += `
+            <div class="host-group">
+                <div class="host-header">
+                    <span>🖥️ ${hostName}</span>
+                    <span>${hostData.total_osds} OSDs</span>
+                </div>
+        `;
+
+        for (const osd of hostData.osds) {
+
+            const isIn = osd.in_out === 'in';
+            const daemonUp = osd.status === 'up';
+
+            const btnText = isIn ? '⬇️ Mark Out' : '⬆️ Mark In';
+            const btnClass = isIn ? 'btn-danger' : 'btn-primary';
+
+            html += `
+                <div class="osd-item">
+                    <div class="osd-info">
+                        <div class="osd-name">OSD ${osd.osd_id}</div>
+                        <div class="osd-details">
+                            Cluster: ${isIn ? 'IN' : 'OUT'} |
+                            Daemon: ${daemonUp ? 'UP' : 'DOWN'} |
+                            Weight: ${osd.weight}
+                        </div>
+                    </div>
+                    <div class="osd-actions">
+                        <button class="btn ${btnClass} btn-small"
+                            onclick="toggleOsdStatus(${osd.osd_id}, '${osd.in_out}')">
+                            ${btnText}
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        html += `</div>`;
+    }
+
+    osdsList.innerHTML = html || `<div>No OSDs found</div>`;
+}
+
+async function toggleOsdStatus(osdId, currentState) {
     try {
-        const endpoint = currentStatus === 'up' ? `/api/osd/${osdId}/out` : `/api/osd/${osdId}/in`;
-        const result = await apiCall(endpoint, 'POST');
-        
-        showToast(`OSD ${osdId} ${currentStatus === 'up' ? 'marked out' : 'marked in'}`, 'success');
-        loadOsds();
+        const endpoint =
+            currentState === 'in'
+                ? `/api/osd/${osdId}/out`
+                : `/api/osd/${osdId}/in`;
+
+        await apiCall(endpoint, 'POST');
+
+        showToast(
+            currentState === 'in'
+                ? `OSD ${osdId} marked OUT`
+                : `OSD ${osdId} marked IN`,
+            'success'
+        );
+
+        setTimeout(loadOsds, 1000);
+
     } catch (error) {
-        showToast(`Error toggling OSD ${osdId}: ${error.message}`, 'error');
+        showToast('OSD action failed', 'error');
     }
 }
 
+// =========================
 // Nodes
+// =========================
 async function loadNodes() {
     try {
         const osds = await apiCall('/api/osds');
+
         if (osds && osds.hosts) {
             state.nodes = Object.keys(osds.hosts);
-            
-            // Update node selectors
             updateNodeSelectors();
         }
+
     } catch (error) {
         showToast('Error loading nodes: ' + error.message, 'error');
     }
-    
-    // Setup event listeners
+
     document.getElementById('discover-btn').onclick = discoverVolumes;
     document.getElementById('free-disk-btn').onclick = findFreeDisks;
 }
@@ -355,99 +366,158 @@ function updateNodeSelectors() {
         document.getElementById('free-disk-node'),
         document.getElementById('clean-node')
     ];
-    
+
     const options = state.nodes.map(node => `<option value="${node}">${node}</option>`).join('');
-    
+
     selectors.forEach(selector => {
-        selector.innerHTML = `<option value="">Select a node...</option>${options}`;
+        if (selector) {
+            selector.innerHTML = `<option value="">Select a node...</option>${options}`;
+        }
     });
 }
 
 async function discoverVolumes() {
     const node = document.getElementById('node-selector').value;
-    if (!node) {
-        showToast('Please select a node', 'error');
-        return;
-    }
-    
+    const btn = document.getElementById('discover-btn');
     const output = document.getElementById('discovery-results');
-    output.innerHTML = '<div class="output-status"><span class="icon">⏳</span><span>Discovering volumes...</span></div>';
-    output.classList.remove('success', 'error');
-    output.classList.add('loading');
-    
+
+    if (!node) return showToast('Please select a node', 'error');
+
+    btn.disabled = true;
+    btn.innerText = 'Processing...';
+    output.innerHTML = '⏳ Discovering volumes...';
+
     try {
         const result = await apiCall('/api/node/ceph-volume/raw-list', 'POST', { node });
-        
-        let text = `Node: ${result.node}\nJob: ${result.job}\nPod: ${result.pod}\nFound: ${result.total_osds} OSDs\n\n`;
-        text += 'OSDs Discovered:\n';
-        text += result.osds.map(osd => 
-            `  OSD ID: ${osd.osd_id}\n  Device: ${osd.device}\n  Type: ${osd.type}\n  UUID: ${osd.osd_uuid}\n`
-        ).join('\n');
-        
-        output.textContent = text;
-        output.classList.remove('loading');
-        output.classList.add('success');
-        showToast(`Discovered ${result.total_osds} OSDs on ${node}`, 'success');
+
+        let html = `
+            <h4>✅ Discovery Completed</h4>
+            <p><strong>Node:</strong> ${result.node}</p>
+            <p><strong>Total OSDs:</strong> ${result.total_osds}</p>
+            <table class="result-table">
+                <tr>
+                    <th>OSD ID</th>
+                    <th>Device</th>
+                    <th>Type</th>
+                </tr>
+        `;
+
+        result.osds.forEach(osd => {
+            html += `
+                <tr>
+                    <td>${osd.osd_id}</td>
+                    <td>${osd.device}</td>
+                    <td>${osd.type}</td>
+                </tr>
+            `;
+        });
+
+        html += `</table>`;
+
+        output.innerHTML = html;
+        showToast('Discovery completed', 'success');
+
     } catch (error) {
-        output.textContent = `Error: ${error.message}`;
-        output.classList.remove('loading');
-        output.classList.add('error');
-        showToast('Error discovering volumes: ' + error.message, 'error');
+        output.innerHTML = '❌ Failed to discover volumes';
+        showToast('Error discovering volumes', 'error');
     }
+
+    btn.disabled = false;
+    btn.innerText = 'Discover Volumes';
 }
 
 async function findFreeDisks() {
     const node = document.getElementById('free-disk-node').value;
+    const btn = document.getElementById('free-disk-btn');
+    const output = document.getElementById('free-disks-results');
+
     if (!node) {
         showToast('Please select a node', 'error');
         return;
     }
-    
-    const output = document.getElementById('free-disks-results');
-    output.innerHTML = '<div class="output-status"><span class="icon">⏳</span><span>Finding free disks...</span></div>';
-    output.classList.remove('success', 'error');
-    output.classList.add('loading');
-    
+
+    btn.disabled = true;
+    btn.innerText = 'Processing...';
+    output.innerHTML = '⏳ Checking free disks...';
+
     try {
         const result = await apiCall('/api/node/free-disks', 'POST', { node });
-        
-        let text = `Node: ${result.node}\n\n`;
-        text += `Summary:\n  Free for Ceph: ${result.summary.free_for_ceph}\n  Blocked: ${result.summary.blocked}\n\n`;
-        
-        text += 'Free Disks:\n';
+
+        let rows = '';
+
+        // FREE disks
         result.free_disks.forEach(disk => {
-            text += `  Name: ${disk.name}\n  Path: ${disk.path}\n  Size: ${disk.size}\n\n`;
+            rows += `
+                <tr>
+                    <td>${disk.name}</td>
+                    <td>${disk.path}</td>
+                    <td>${disk.size}</td>
+                    <td style="color:#27ae60;font-weight:bold;">FREE</td>
+                    <td>Ready for Ceph</td>
+                </tr>
+            `;
         });
-        
-        text += 'Blocked Disks:\n';
+
+        // BLOCKED disks
         result.blocked_disks.forEach(disk => {
-            text += `  Name: ${disk.name}\n  Path: ${disk.path}\n  Size: ${disk.size}\n  Reason: ${disk.reason}\n\n`;
+            rows += `
+                <tr>
+                    <td>${disk.name}</td>
+                    <td>${disk.path}</td>
+                    <td>${disk.size}</td>
+                    <td style="color:#e74c3c;font-weight:bold;">BLOCKED</td>
+                    <td>${disk.reason}</td>
+                </tr>
+            `;
         });
-        
-        output.textContent = text;
-        output.classList.remove('loading');
-        output.classList.add('success');
-        showToast(`Found ${result.summary.free_for_ceph} free disks`, 'success');
+
+        output.innerHTML = `
+            <h4>✅ Disk Scan Completed</h4>
+            <p><strong>Node:</strong> ${result.node}</p>
+            <p><strong>Free:</strong> ${result.summary.free_for_ceph}</p>
+            <p><strong>Blocked:</strong> ${result.summary.blocked}</p>
+
+            <h4>All Disks</h4>
+
+            <table class="result-table">
+                <tr>
+                    <th>Name</th>
+                    <th>Path</th>
+                    <th>Size</th>
+                    <th>Status</th>
+                    <th>Reason</th>
+                </tr>
+                ${rows}
+            </table>
+        `;
+
+        showToast('Disk scan completed', 'success');
+
     } catch (error) {
-        output.textContent = `Error: ${error.message}`;
-        output.classList.remove('loading');
-        output.classList.add('error');
-        showToast('Error finding free disks: ' + error.message, 'error');
+        output.innerHTML = '❌ Failed to check disks';
+        showToast('Error checking disks', 'error');
     }
+
+    btn.disabled = false;
+    btn.innerText = 'Find Free Disks';
 }
 
-// Disks Management
+// =========================
+// Disks
+// =========================
 async function loadDisks() {
     try {
         const osds = await apiCall('/api/osds');
+
         if (osds && osds.hosts) {
             state.nodes = Object.keys(osds.hosts);
             updateNodeSelectors();
         }
+
     } catch (error) {
-        showToast('Error loading disk management: ' + error.message, 'error');
+        showToast('Error loading disk management', 'error');
     }
-    
+
     document.getElementById('clean-btn').onclick = cleanDisk;
     document.getElementById('purge-btn').onclick = purgeOsd;
 }
@@ -455,37 +525,60 @@ async function loadDisks() {
 async function cleanDisk() {
     const node = document.getElementById('clean-node').value;
     const disk = document.getElementById('clean-disk').value;
-    
+    const output = document.getElementById('clean-results');
+
     if (!node || !disk) {
         showToast('Please select node and enter disk path', 'error');
         return;
     }
-    
-    if (!confirm(`Are you sure you want to clean and wipe disk ${disk} on node ${node}? This cannot be undone!`)) {
+
+    if (!confirm(`Are you sure you want to clean and wipe disk ${disk} on node ${node}?`)) {
         return;
     }
-    
-    const output = document.getElementById('clean-results');
-    output.innerHTML = '<div class="output-status"><span class="icon">⏳</span><span>Cleaning disk...</span></div>';
+
     output.classList.remove('success', 'error');
     output.classList.add('loading');
-    
+
+    output.innerHTML = `
+        <div class="output-status">
+            <span class="loading-spinner"></span>
+            <span>Cleaning disk in progress...</span>
+        </div>
+    `;
+
     try {
-        const result = await apiCall('/api/disk/clean-osd', 'POST', { node, disk });
-        
-        let text = `Node: ${result.node}\nDisk: ${result.disk}\nJob: ${result.job}\nPod: ${result.pod}\n\n`;
-        text += `${result.message}\n\n`;
-        text += 'Job Output:\n';
-        text += result.logs;
-        
-        output.textContent = text;
+        const result = await apiCall('/api/disk/clean-osd', 'POST', {
+            node,
+            disk
+        });
+
+        output.innerHTML = `
+            <div class="success-title">✅ Disk Cleanup Completed</div>
+
+            <div class="info-box"><b>Node:</b> ${result.node}</div>
+            <div class="info-box"><b>Disk:</b> ${result.disk}</div>
+            <div class="info-box"><b>Status:</b> ${result.message}</div>
+            <div class="info-box"><b>Job:</b> ${result.job}</div>
+            <div class="info-box"><b>Pod:</b> ${result.pod}</div>
+
+            <h4>Cleanup Logs</h4>
+            <pre>${result.logs || 'No logs available'}</pre>
+        `;
+
         output.classList.remove('loading');
         output.classList.add('success');
+
         showToast(`Disk ${disk} cleaned successfully`, 'success');
+
     } catch (error) {
-        output.textContent = `Error: ${error.message}`;
+        output.innerHTML = `
+            <div class="success-title">❌ Disk Cleanup Failed</div>
+            <pre>${error.message}</pre>
+        `;
+
         output.classList.remove('loading');
         output.classList.add('error');
+
         showToast('Error cleaning disk: ' + error.message, 'error');
     }
 }
@@ -493,78 +586,111 @@ async function cleanDisk() {
 async function purgeOsd() {
     const osdId = document.getElementById('purge-osd-id').value;
     const force = document.getElementById('purge-force').checked;
-    
-    if (osdId === '') {
-        showToast('Please enter an OSD ID', 'error');
-        return;
-    }
-    
-    if (!confirm(`Are you sure you want to purge OSD ${osdId}? This cannot be undone!`)) {
-        return;
-    }
-    
     const output = document.getElementById('purge-results');
-    output.innerHTML = '<div class="output-status"><span class="icon">⏳</span><span>Purging OSD...</span></div>';
+
+    if (osdId === '') {
+        showToast('Please select OSD ID', 'error');
+        return;
+    }
+
+    if (!confirm(`Are you sure you want to purge OSD ${osdId}?`)) {
+        return;
+    }
+
     output.classList.remove('success', 'error');
     output.classList.add('loading');
-    
+
+    output.innerHTML = `
+        <div class="output-status">
+            <span class="loading-spinner"></span>
+            <span>Purging OSD in progress...</span>
+        </div>
+    `;
+
     try {
-        const result = await apiCall('/api/osd/purge-safe', 'POST', { osd_id: parseInt(osdId), force });
-        
-        let text = `OSD ID: ${osdId}\nForce: ${force}\n\n`;
-        text += 'Purge Log:\n';
-        result.logs.forEach(log => {
-            text += `  • ${log}\n`;
+        const result = await apiCall('/api/osd/purge-safe', 'POST', {
+            osd_id: parseInt(osdId),
+            force
         });
-        
-        output.textContent = text;
+
+        output.innerHTML = `
+            <div class="success-title">✅ OSD Purge Completed</div>
+
+            <div class="info-box"><b>OSD ID:</b> ${result.osd_id}</div>
+            <div class="info-box"><b>Force Mode:</b> ${result.force ? 'Yes' : 'No'}</div>
+            <div class="info-box"><b>Status:</b> ${result.status}</div>
+
+            <h4>Purge Steps</h4>
+            <ul>
+                ${(result.logs || []).map(log => `<li>${log}</li>`).join('')}
+            </ul>
+        `;
+
         output.classList.remove('loading');
         output.classList.add('success');
+
         showToast(`OSD ${osdId} purged successfully`, 'success');
+
     } catch (error) {
-        output.textContent = `Error: ${error.message}`;
+        output.innerHTML = `
+            <div class="success-title">❌ OSD Purge Failed</div>
+            <pre>${error.message}</pre>
+        `;
+
         output.classList.remove('loading');
         output.classList.add('error');
+
         showToast('Error purging OSD: ' + error.message, 'error');
     }
 }
 
-// Operators
-document.addEventListener('DOMContentLoaded', () => {
-    const restartBtn = document.getElementById('restart-operator-btn');
-    if (restartBtn) {
-        restartBtn.onclick = restartOperator;
-    }
-});
-
+// =========================
+// Operator
+// =========================
 async function restartOperator() {
-    if (!confirm('Are you sure you want to restart the Rook-Ceph operator? This may temporarily affect Ceph operations.')) {
-        return;
-    }
-    
-    const output = document.getElementById('operator-results');
-    output.innerHTML = '<div class="output-status"><span class="icon">⏳</span><span>Restarting operator...</span></div>';
-    output.classList.remove('success', 'error');
-    output.classList.add('loading');
-    
     try {
         const result = await apiCall('/api/operator/restart', 'POST');
-        
-        let text = `Status: ${result.status}\nMessage: ${result.message}\n\nOperator restart has been triggered. Pods will be cycling now.`;
-        
-        output.textContent = text;
-        output.classList.remove('loading');
-        output.classList.add('success');
-        showToast('Operator restart triggered successfully', 'success');
+        document.getElementById('operator-results').textContent = JSON.stringify(result, null, 2);
+        showToast('Operator restarted', 'success');
     } catch (error) {
-        output.textContent = `Error: ${error.message}`;
-        output.classList.remove('loading');
-        output.classList.add('error');
-        showToast('Error restarting operator: ' + error.message, 'error');
+        showToast('Restart failed', 'error');
     }
 }
 
-// Refresh Button
+async function loadPurgeOsds() {
+    try {
+        const res = await apiCall('/api/osds');
+
+        const select = document.getElementById('purge-osd-id');
+
+        if (!res || res.status !== "success" || !res.hosts) {
+            select.innerHTML = `<option value="">No OSDs found</option>`;
+            return;
+        }
+
+        let options = `<option value="">Select OSD to purge...</option>`;
+
+        Object.entries(res.hosts).forEach(([node, hostData]) => {
+            (hostData.osds || []).forEach(osd => {
+
+                options += `
+                    <option value="${osd.osd_id}">
+                        OSD ${osd.osd_id} (${node} | ${osd.in_out.toUpperCase()} | ${osd.status.toUpperCase()})
+                    </option>
+                `;
+            });
+        });
+
+        select.innerHTML = options;
+
+    } catch (err) {
+        console.error(err);
+        document.getElementById('purge-osd-id').innerHTML =
+            `<option value="">Failed to load OSDs</option>`;
+    }
+}
+
+// Refresh
 refreshBtn.addEventListener('click', () => {
     checkApiHealth();
     loadPageData(state.currentPage);
@@ -573,9 +699,11 @@ refreshBtn.addEventListener('click', () => {
 
 // Initial Load
 document.addEventListener('DOMContentLoaded', () => {
+    const restartBtn = document.getElementById('restart-operator-btn');
+    if (restartBtn) restartBtn.onclick = restartOperator;
+
     checkApiHealth();
     showPage('dashboard');
-    
-    // Refresh health check every 10 seconds
+
     setInterval(checkApiHealth, 10000);
 });
