@@ -2,9 +2,15 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const k8s = require("@kubernetes/client-node");
 const stream = require("stream");
+const cors = require("cors");
 
 const app = express();
 app.use(bodyParser.json());
+app.use(cors({
+  origin: "*",   // allow all (for testing)
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  credentials: true
+}));
 
 const kc = new k8s.KubeConfig();
 kc.loadFromDefault();

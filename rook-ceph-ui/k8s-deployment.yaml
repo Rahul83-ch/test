@@ -1,0 +1,143 @@
+---
+# ConfigMap for any future configurations
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rook-ceph-ui-config
+  namespace: rook-ceph
+data:
+  API_BASE_URL: "http://rook-ceph-api:3000"
+  NODE_ENV: "production"
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rook-ceph-ui
+  namespace: rook-ceph
+  labels:
+    app: rook-ceph-ui
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rook-ceph-ui
+  template:
+    metadata:
+      labels:
+        app: rook-ceph-ui
+    spec:
+      containers:
+      - name: ui
+        image: registry-local.flextronassembly.net/q2c/rook-ceph-ui:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3001
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3001"
+        envFrom:
+          - configMapRef:
+              name: rook-ceph-ui-config
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 2
+      imagePullSecrets:
+        - name: harbor-auth-main
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: rook-ceph-ui
+  namespace: rook-ceph
+  labels:
+    app: rook-ceph-ui
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3001
+    targetPort: 3001
+    protocol: TCP
+  selector:
+    app: rook-ceph-ui
+---
+# # ServiceAccount
+# apiVersion: v1
+# kind: ServiceAccount
+# metadata:
+#   name: rook-ceph-ui
+#   namespace: rook-ceph
+# ---
+# # PodDisruptionBudget
+# apiVersion: policy/v1
+# kind: PodDisruptionBudget
+# metadata:
+#   name: rook-ceph-ui
+#   namespace: rook-ceph
+# spec:
+#   minAvailable: 1
+#   selector:
+#     matchLabels:
+#       app: rook-ceph-ui
+# ---
+# # NetworkPolicy (optional, for security)
+# apiVersion: networking.k8s.io/v1
+# kind: NetworkPolicy
+# metadata:
+#   name: rook-ceph-ui
+#   namespace: rook-ceph
+# spec:
+#   podSelector:
+#     matchLabels:
+#       app: rook-ceph-ui
+#   policyTypes:
+#   - Ingress
+#   - Egress
+#   ingress:
+#   - from:
+#     - namespaceSelector: {}
+#     ports:
+#     - protocol: TCP
+#       port: 3001
+#   egress:
+#   - to:
+#     - namespaceSelector: {}
+#     ports:
+#     - protocol: TCP
+#       port: 3000  # Backend API
+#   - to:
+#     - namespaceSelector:
+#         matchLabels:
+#           name: kube-system
+#     ports:
+#     - protocol: TCP
+#       port: 53   # DNS
+#     - protocol: UDP
+#       port: 53   # DNS

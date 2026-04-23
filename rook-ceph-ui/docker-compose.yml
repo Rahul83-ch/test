@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  # Rook-Ceph Backend API
+  backend:
+    build:
+      context: ./rook-ceph-backend-phase2 - Copy (2)
+      dockerfile: Dockerfile
+    container_name: rook-ceph-backend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+    networks:
+      - ceph-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Rook-Ceph UI
+  frontend:
+    build:
+      context: ./rook-ceph-ui
+      dockerfile: Dockerfile
+    container_name: rook-ceph-ui
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+    networks:
+      - ceph-network
+    depends_on:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  ceph-network:
+    driver: bridge

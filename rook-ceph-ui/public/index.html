@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rook-Ceph Management Console</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>Ceph Dashboard</h1>
+                <p class="version">v2.0</p>
+            </div>
+            <nav class="nav-menu">
+                <button class="nav-item active" data-page="dashboard">
+                    <span class="icon">📊</span> Dashboard
+                </button>
+                <button class="nav-item" data-page="osds">
+                    <span class="icon">💾</span> OSDs
+                </button>
+                <button class="nav-item" data-page="nodes">
+                    <span class="icon">🖥️</span> Nodes
+                </button>
+                <button class="nav-item" data-page="disks">
+                    <span class="icon">🗄️</span> Disk Management
+                </button>
+                <button class="nav-item" data-page="operators">
+                    <span class="icon">⚙️</span> Operators
+                </button>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="top-header">
+                <div class="header-content">
+                    <h2 id="page-title">Dashboard</h2>
+                    <div class="header-actions">
+                        <button id="refresh-btn" class="btn btn-secondary">🔄 Refresh</button>
+                        <div class="status-indicator" id="api-status">
+                            <span class="status-dot"></span> Connecting...
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Pages Content -->
+            <div class="pages-wrapper">
+                <!-- Dashboard Page -->
+                <div id="dashboard" class="page active">
+                    <div class="grid grid-2">
+                        <!-- Cluster Health Card -->
+                        <div class="card">
+                            <h3>Cluster Health</h3>
+                            <div class="health-status" id="cluster-health">
+                                <div class="status-circle" style="background: #ccc;"></div>
+                                <span>Loading...</span>
+                            </div>
+                            <div class="health-details" id="health-details"></div>
+                        </div>
+
+                        <!-- Storage Stats -->
+                        <div class="card">
+                            <h3>Storage Statistics</h3>
+                            <div id="storage-stats" class="stats-grid"></div>
+                        </div>
+                    </div>
+
+                    <!-- Services Status -->
+                    <div class="card">
+                        <h3>Services Status</h3>
+                        <div class="services-grid" id="services-status"></div>
+                    </div>
+
+                    <!-- Recovery Status -->
+                    <div class="card">
+                        <h3>Recovery Status</h3>
+                        <div id="recovery-status" class="recovery-info"></div>
+                    </div>
+                </div>
+
+                <!-- OSDs Page -->
+                <div id="osds" class="page">
+                    <div class="card">
+                        <h3>OSD Summary</h3>
+                        <div id="osds-summary" class="summary-stats"></div>
+                    </div>
+
+                    <div class="card">
+                        <h3>Hosts & OSDs</h3>
+                        <div id="osds-list" class="osds-list"></div>
+                    </div>
+                </div>
+
+                <!-- Nodes Page -->
+                <div id="nodes" class="page">
+                    <div class="card">
+                        <h3>Disk & Volume Discovery</h3>
+                        <div class="node-control">
+                            <label>Select Node:</label>
+                            <select id="node-selector">
+                                <option value="">Loading nodes...</option>
+                            </select>
+                            <button id="discover-btn" class="btn btn-primary">Discover Volumes</button>
+                        </div>
+                        <div id="discovery-results" class="discovery-output"></div>
+                    </div>
+
+                    <div class="card">
+                        <h3>Free Disks Detection</h3>
+                        <div class="node-control">
+                            <label>Select Node:</label>
+                            <select id="free-disk-node">
+                                <option value="">Loading nodes...</option>
+                            </select>
+                            <button id="free-disk-btn" class="btn btn-primary">Find Free Disks</button>
+                        </div>
+                        <div id="free-disks-results" class="discovery-output"></div>
+                    </div>
+                </div>
+
+                <!-- Disk Management Page -->
+                <div id="disks" class="page">
+                    <div class="card">
+                        <h3>Clean OSD Disk</h3>
+                        <div class="disk-control">
+                            <div class="form-group">
+                                <label>Node:</label>
+                                <select id="clean-node">
+                                    <option value="">Loading nodes...</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Disk Path:</label>
+                                <input type="text" id="clean-disk" placeholder="e.g., /dev/sdb">
+                            </div>
+                            <button id="clean-btn" class="btn btn-danger">Clean & Wipe Disk</button>
+                        </div>
+                        <div id="clean-results" class="discovery-output"></div>
+                    </div>
+
+                    <div class="card">
+                        <h3>Safe OSD Purge</h3>
+                        <div class="disk-control">
+                            <div class="form-group">
+                                <label>OSD ID:</label>
+                                <input type="number" id="purge-osd-id" placeholder="e.g., 0" min="0">
+                            </div>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="purge-force">
+                                    Force Purge
+                                </label>
+                            </div>
+                            <button id="purge-btn" class="btn btn-danger">Purge OSD</button>
+                        </div>
+                        <div id="purge-results" class="discovery-output"></div>
+                    </div>
+                </div>
+
+                <!-- Operators Page -->
+                <div id="operators" class="page">
+                    <div class="card">
+                        <h3>Operator Management</h3>
+                        <p>Restart the Rook-Ceph operator pod to apply changes or recover from issues.</p>
+                        <button id="restart-operator-btn" class="btn btn-danger">🔄 Restart Operator</button>
+                        <div id="operator-results" class="discovery-output"></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="/app.js"></script>
+</body>
+</html>
