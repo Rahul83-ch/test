@@ -23,3 +23,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Start application
 CMD ["npm", "start"]
+
+
+# docker build -t registry-local.flextronassembly.net/q2c/rook-ceph-ui:latest . 
+
+# docker push registry-local.flextronassembly.net/q2c/rook-ceph-ui:latest
