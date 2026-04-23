@@ -667,7 +667,7 @@ app.post("/api/disk/clean-osd", async (req, res) => {
             containers: [
               {
                 name: "cleaner",
-                image: "ubuntu:22.04",
+                image: "quay.io/ceph/ceph:v18",
                 securityContext: {
                   privileged: true
                 },
@@ -675,11 +675,6 @@ app.post("/api/disk/clean-osd", async (req, res) => {
                   "/bin/bash",
                   "-c",
                   `
-export DEBIAN_FRONTEND=noninteractive
-
-apt-get update -qq >/dev/null 2>&1
-apt-get install -y -qq gdisk util-linux >/dev/null 2>&1
-
 echo "=================================="
 echo "Starting Disk Cleanup"
 echo "Disk: ${disk}"
