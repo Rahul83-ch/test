@@ -492,18 +492,18 @@ app.post("/api/node/free-disks", async (req, res) => {
     const { node } = req.body;
 
     if (!node) {
-      return res.status(400).json({ error: "node is required" });
+      return res.status(400).json({
+        status: "failed",
+        error: "node is required"
+      });
     }
 
-    const jobName = "free-disks-" + Date.now();
+    const jobName = "disk-scan-" + Date.now();
 
     const job = {
       apiVersion: "batch/v1",
       kind: "Job",
-      metadata: {
-        name: jobName,
-        namespace: ns
-      },
+      metadata: { name: jobName, namespace: ns },
       spec: {
         backoffLimit: 0,
         template: {
@@ -543,95 +543,169 @@ ceph-volume raw list || true;
     };
 
     await batch.createNamespacedJob({ namespace: ns, body: job });
-    await new Promise(r => setTimeout(r, 7000));
 
-    const pods = await core.listNamespacedPod({ namespace: ns });
-    const pod = pods.items.find(p => p.metadata.name.includes(jobName));
+    // wait pod
+    const waitPod = async () => {
+      for (let i = 0; i < 25; i++) {
+        const pods = await core.listNamespacedPod({ namespace: ns });
+        const pod = pods.items.find(p => p.metadata.name.includes(jobName));
+
+        if (pod && (pod.status.phase === "Succeeded" || pod.status.phase === "Failed")) {
+          return pod;
+        }
+
+        await new Promise(r => setTimeout(r, 1000));
+      }
+      throw new Error("Pod timeout");
+    };
+
+    const pod = await waitPod();
 
     const logs = await core.readNamespacedPodLog({
       name: pod.metadata.name,
       namespace: ns
     });
 
+    // ---------------- PARSE ----------------
     const lsblkRaw = logs.split("===LSBLK===")[1].split("===CEPH===")[0].trim();
     const cephRaw = logs.split("===CEPH===")[1].trim();
 
     const lsblk = JSON.parse(lsblkRaw);
 
-    const usedByCeph = [];
-    const regex = /"device":\s*"([^"]+)"/g;
-    let match;
+    // ---------------- CEPH MAP ----------------
+    const cephMap = {};
+    try {
+      const cephJson = JSON.parse(cephRaw);
+      Object.values(cephJson).forEach(e => {
+        if (e.device) cephMap[e.device] = e.osd_id;
+      });
+    } catch {}
 
-    while ((match = regex.exec(cephRaw)) !== null) {
-      usedByCeph.push(match[1]);
-    }
+    // ---------------- ACTIVE OSD ----------------
+    const osdTree = await execInToolbox(["ceph", "osd", "tree"]);
+    const activeOsds = [];
 
-    const freeDisks = [];
-    const usedDisks = [];
+    osdTree.stdout.split("\n").forEach(line => {
+      if (line.includes("osd.")) {
+        const parts = line.trim().split(/\s+/);
+        const id = parseInt(parts[0]);
+        const status = parts[4];
+        if (status === "up") activeOsds.push(id);
+      }
+    });
+
+    // ---------------- HELPERS ----------------
+
+    const isLoopDevice = (name) =>
+      name.startsWith("loop") ||
+      name.startsWith("nbd") ||
+      name.startsWith("rbd");
+
+    const getAllMounts = (nodes) => {
+      let mounts = [];
+      for (const n of nodes || []) {
+        if (n.mountpoint) mounts.push(n.mountpoint);
+        if (n.children) mounts = mounts.concat(getAllMounts(n.children));
+      }
+      return mounts;
+    };
+
+    const isOSDisk = (mounts, children) => {
+      const cleanMounts = mounts.filter(m =>
+        !["/etc/resolv.conf", "/etc/hostname", "/etc/hosts"].includes(m)
+      );
+
+      const hasBoot = cleanMounts.some(m =>
+        m === "/" || m.startsWith("/boot")
+      );
+
+      const hasLVM =
+        JSON.stringify(children).includes("ubuntu--vg") ||
+        JSON.stringify(children).includes("mapper");
+
+      return hasBoot || hasLVM;
+    };
+
+    // ---------------- MAIN ----------------
+
+    const result = [];
 
     for (const disk of lsblk.blockdevices) {
+
+      if (isLoopDevice(disk.name)) continue;
       if (disk.type !== "disk") continue;
-
-      const isPhysicalDisk =
-        /^sd[a-z]+$/.test(disk.name) ||
-        /^vd[a-z]+$/.test(disk.name) ||
-        /^xvd[a-z]+$/.test(disk.name) ||
-        /^nvme\d+n\d+$/.test(disk.name);
-
-      if (!isPhysicalDisk) continue;
+      if (disk.size === "0B") continue;
 
       const path = "/dev/" + disk.name;
+      const children = disk.children || [];
+      const mounts = getAllMounts(children);
 
-      const hasMountedPartitions =
-        disk.children &&
-        disk.children.some(c => c.mountpoint);
+      const osdId = cephMap[path];
+      const isCeph = osdId !== undefined;
+      const isActive = isCeph && activeOsds.includes(osdId);
 
-      const hasPartitions =
-        disk.children &&
-        disk.children.length > 0;
+      const osDisk = isOSDisk(mounts, children);
+      const hasPartitions = children.length > 0;
+      const hasFS = disk.fstype || children.some(c => c.fstype);
 
-      const isCephUsed = usedByCeph.includes(path);
+      let status = "READY";
+      let reason = "Clean disk";
 
-      if (isCephUsed) {
-        usedDisks.push({
-          name: disk.name,
-          path,
-          size: disk.size,
-          reason: "Used by Ceph"
-        });
-        continue;
+      if (osDisk) {
+        status = "OS";
+        reason = "Used by OS";
+      }
+      else if (isCeph && isActive) {
+        status = "CEPH";
+        reason = `Active OSD (${osdId})`;
+      }
+      else if (isCeph && !isActive) {
+        status = "STALE";
+        reason = `Old Ceph data (OSD ${osdId})`;
+      }
+      else if (hasPartitions || hasFS) {
+        status = "DIRTY";
+        reason = "Has partitions / filesystem";
       }
 
-      if (hasMountedPartitions || hasPartitions) {
-        usedDisks.push({
-          name: disk.name,
-          path,
-          size: disk.size,
-          reason: "OS/System Disk"
-        });
-        continue;
-      }
+      // DEBUG (keep for production troubleshooting)
+      console.log("DISK DEBUG:", {
+        disk: disk.name,
+        path,
+        mounts,
+        children: children.map(c => c.name),
+        osDisk,
+        isCeph,
+        isActive,
+        status
+      });
 
-      freeDisks.push({
+      result.push({
         name: disk.name,
         path,
-        size: disk.size
+        size: disk.size,
+        status,
+        reason
       });
     }
 
-    res.json({
+    // ---------------- RESPONSE ----------------
+
+    return res.json({
       status: "success",
       node,
+      disks: result,
       summary: {
-        free_for_ceph: freeDisks.length,
-        blocked: usedDisks.length
-      },
-      free_disks: freeDisks,
-      blocked_disks: usedDisks
+        ready: result.filter(d => d.status === "READY").length,
+        dirty: result.filter(d => d.status === "DIRTY").length,
+        ceph: result.filter(d => d.status === "CEPH").length,
+        os: result.filter(d => d.status === "OS").length,
+        stale: result.filter(d => d.status === "STALE").length
+      }
     });
 
   } catch (err) {
-    res.status(500).json({
+    return res.status(500).json({
       status: "failed",
       error: err.message
     });

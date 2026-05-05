@@ -437,47 +437,59 @@ async function findFreeDisks() {
     }
 
     btn.disabled = true;
-    btn.innerText = 'Processing...';
-    output.innerHTML = '⏳ Checking free disks...';
+    btn.innerText = 'Scanning...';
+    output.innerHTML = '⏳ Scanning disks...';
 
     try {
         const result = await apiCall('/api/node/free-disks', 'POST', { node });
 
+        if (!result || result.status !== "success") {
+            throw new Error(result?.error || "API failed");
+        }
+
+        const statusMap = {
+            READY: { color: '#27ae60', icon: '🟢' },
+            DIRTY: { color: '#f39c12', icon: '🟡' },
+            CEPH: { color: '#e74c3c', icon: '🔴' },
+            OS: { color: '#2c3e50', icon: '⚫' },
+            STALE: { color: '#d35400', icon: '🟠' }
+        };
+
         let rows = '';
 
-        // FREE disks
-        result.free_disks.forEach(disk => {
+        result.disks.forEach(disk => {
+            const ui = statusMap[disk.status] || { color: '#7f8c8d', icon: '❓' };
+
             rows += `
                 <tr>
                     <td>${disk.name}</td>
                     <td>${disk.path}</td>
                     <td>${disk.size}</td>
-                    <td style="color:#27ae60;font-weight:bold;">FREE</td>
-                    <td>Ready for Ceph</td>
+                    <td style="color:${ui.color};font-weight:bold;">
+                        ${ui.icon} ${disk.status}
+                    </td>
+                    <td>${disk.reason || '-'}</td>
                 </tr>
             `;
         });
 
-        // BLOCKED disks
-        result.blocked_disks.forEach(disk => {
-            rows += `
-                <tr>
-                    <td>${disk.name}</td>
-                    <td>${disk.path}</td>
-                    <td>${disk.size}</td>
-                    <td style="color:#e74c3c;font-weight:bold;">BLOCKED</td>
-                    <td>${disk.reason}</td>
-                </tr>
-            `;
-        });
+        if (!rows) {
+            rows = `<tr><td colspan="5">No disks found</td></tr>`;
+        }
+
+        const s = result.summary;
 
         output.innerHTML = `
             <h4>✅ Disk Scan Completed</h4>
             <p><strong>Node:</strong> ${result.node}</p>
-            <p><strong>Free:</strong> ${result.summary.free_for_ceph}</p>
-            <p><strong>Blocked:</strong> ${result.summary.blocked}</p>
 
-            <h4>All Disks</h4>
+            <p style="font-weight:bold;">
+                🟢 Ready: ${s.ready} |
+                🟡 Dirty: ${s.dirty} |
+                🔴 Ceph: ${s.ceph} |
+                ⚫ OS: ${s.os} |
+                🟠 Stale: ${s.stale}
+            </p>
 
             <table class="result-table">
                 <tr>
@@ -491,10 +503,19 @@ async function findFreeDisks() {
             </table>
         `;
 
-        showToast('Disk scan completed', 'success');
+        if (s.ready > 0) {
+            showToast(`${s.ready} disk(s) ready for Ceph`, 'success');
+        } else {
+            showToast('No ready disks available', 'info');
+        }
 
     } catch (error) {
-        output.innerHTML = '❌ Failed to check disks';
+        output.innerHTML = `
+            <div style="color:red;font-weight:bold;">
+                ❌ Failed to check disks
+            </div>
+            <pre>${error.message}</pre>
+        `;
         showToast('Error checking disks', 'error');
     }
 
