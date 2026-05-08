@@ -437,58 +437,62 @@ async function findFreeDisks() {
     }
 
     btn.disabled = true;
-    btn.innerText = 'Scanning...';
-    output.innerHTML = '⏳ Scanning disks...';
+    btn.innerText = 'Processing...';
+    output.innerHTML = '⏳ Checking disks...';
 
     try {
         const result = await apiCall('/api/node/free-disks', 'POST', { node });
 
-        if (!result || result.status !== "success") {
-            throw new Error(result?.error || "API failed");
+        if (result.status !== "success") {
+            throw new Error(result.error || "API failed");
         }
-
-        const statusMap = {
-            READY: { color: '#27ae60', icon: '🟢' },
-            DIRTY: { color: '#f39c12', icon: '🟡' },
-            CEPH: { color: '#e74c3c', icon: '🔴' },
-            OS: { color: '#2c3e50', icon: '⚫' },
-            STALE: { color: '#d35400', icon: '🟠' }
-        };
 
         let rows = '';
 
         result.disks.forEach(disk => {
-            const ui = statusMap[disk.status] || { color: '#7f8c8d', icon: '❓' };
+
+            const statusMap = {
+                OS: "⚫ OS",
+                READY: "🟢 READY",
+                DIRTY: "🟡 DIRTY",
+                CEPH: "🔴 CEPH",
+                STALE: "🟠 STALE"
+            };
 
             rows += `
                 <tr>
                     <td>${disk.name}</td>
                     <td>${disk.path}</td>
                     <td>${disk.size}</td>
-                    <td style="color:${ui.color};font-weight:bold;">
-                        ${ui.icon} ${disk.status}
+
+                    <td>${disk.host_ip ?? 'NA'}</td>
+                    <td>${disk.serial ?? 'NA'}</td>
+                    <td>${disk.osd_id ?? 'NA'}</td>
+                    <td>${disk.osd_status ?? 'NA'}</td>
+                    <td>${disk.osd_state ?? 'NA'}</td>  <!-- ✅ NEW COLUMN -->
+
+                    <td style="font-weight:bold;">
+                        ${statusMap[disk.status] || disk.status}
                     </td>
+
                     <td>${disk.reason || '-'}</td>
                 </tr>
             `;
         });
 
-        if (!rows) {
-            rows = `<tr><td colspan="5">No disks found</td></tr>`;
-        }
-
-        const s = result.summary;
-
         output.innerHTML = `
             <h4>✅ Disk Scan Completed</h4>
-            <p><strong>Node:</strong> ${result.node}</p>
 
-            <p style="font-weight:bold;">
-                🟢 Ready: ${s.ready} |
-                🟡 Dirty: ${s.dirty} |
-                🔴 Ceph: ${s.ceph} |
-                ⚫ OS: ${s.os} |
-                🟠 Stale: ${s.stale}
+            <p>
+                <strong>Node:</strong> ${result.node}
+            </p>
+
+            <p>
+                🟢 Ready: ${result.summary.ready} |
+                🟡 Dirty: ${result.summary.dirty} |
+                🔴 Ceph: ${result.summary.ceph} |
+                ⚫ OS: ${result.summary.os} |
+                🟠 Stale: ${result.summary.stale}
             </p>
 
             <table class="result-table">
@@ -496,18 +500,21 @@ async function findFreeDisks() {
                     <th>Name</th>
                     <th>Path</th>
                     <th>Size</th>
+
+                    <th>Host IP</th>
+                    <th>Serial</th>
+                    <th>OSD ID</th>
+                    <th>OSD Health</th>
+                    <th>OSD Status </th> <!-- ✅ NEW HEADER -->
+
                     <th>Status</th>
                     <th>Reason</th>
                 </tr>
-                ${rows}
+                ${rows || `<tr><td colspan="10">No disks found</td></tr>`}
             </table>
         `;
 
-        if (s.ready > 0) {
-            showToast(`${s.ready} disk(s) ready for Ceph`, 'success');
-        } else {
-            showToast('No ready disks available', 'info');
-        }
+        showToast("Disk scan completed", "success");
 
     } catch (error) {
         output.innerHTML = `
@@ -516,6 +523,7 @@ async function findFreeDisks() {
             </div>
             <pre>${error.message}</pre>
         `;
+
         showToast('Error checking disks', 'error');
     }
 

@@ -3,6 +3,7 @@ const bodyParser = require("body-parser");
 const k8s = require("@kubernetes/client-node");
 const stream = require("stream");
 const cors = require("cors");
+const { execSync } = require("child_process");
 
 const app = express();
 app.use(bodyParser.json());
@@ -491,6 +492,9 @@ app.post("/api/node/free-disks", async (req, res) => {
   try {
     const { node } = req.body;
 
+    console.log("==== API /free-disks START ====");
+    console.log("REQUEST NODE:", node);
+
     if (!node) {
       return res.status(400).json({
         status: "failed",
@@ -499,6 +503,7 @@ app.post("/api/node/free-disks", async (req, res) => {
     }
 
     const jobName = "disk-scan-" + Date.now();
+    console.log("JOB NAME:", jobName);
 
     const job = {
       apiVersion: "batch/v1",
@@ -515,12 +520,28 @@ app.post("/api/node/free-disks", async (req, res) => {
               name: "runner",
               image: "quay.io/ceph/ceph:v18",
               securityContext: { privileged: true },
+
+              // ✅ ADD THIS (REAL NODE IP)
+              env: [
+                {
+                  name: "HOST_IP",
+                  valueFrom: {
+                    fieldRef: {
+                      fieldPath: "status.hostIP"
+                    }
+                  }
+                }
+              ],
+
               command: [
                 "/bin/bash",
                 "-c",
                 `
+echo "===HOST_IP===";
+echo $HOST_IP;
+
 echo "===LSBLK===";
-lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE;
+lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE,SERIAL;
 
 echo "===CEPH===";
 ceph-volume raw list || true;
@@ -543,12 +564,20 @@ ceph-volume raw list || true;
     };
 
     await batch.createNamespacedJob({ namespace: ns, body: job });
+    console.log("JOB CREATED");
 
-    // wait pod
+    // ---------------- WAIT POD ----------------
     const waitPod = async () => {
       for (let i = 0; i < 25; i++) {
         const pods = await core.listNamespacedPod({ namespace: ns });
-        const pod = pods.items.find(p => p.metadata.name.includes(jobName));
+
+        const pod = pods.items.find(p =>
+          p.metadata.name.includes(jobName)
+        );
+
+        if (pod) {
+          console.log("FOUND POD:", pod.metadata.name, "STATUS:", pod.status.phase);
+        }
 
         if (pod && (pod.status.phase === "Succeeded" || pod.status.phase === "Failed")) {
           return pod;
@@ -556,19 +585,39 @@ ceph-volume raw list || true;
 
         await new Promise(r => setTimeout(r, 1000));
       }
+
       throw new Error("Pod timeout");
     };
 
     const pod = await waitPod();
+
+    console.log("FINAL POD:", pod.metadata.name);
 
     const logs = await core.readNamespacedPodLog({
       name: pod.metadata.name,
       namespace: ns
     });
 
+    console.log("==== RAW POD LOGS START ====");
+    console.log(logs);
+    console.log("==== RAW POD LOGS END ====");
+
     // ---------------- PARSE ----------------
+    const hostIpRaw = logs
+      .split("===HOST_IP===")[1]
+      ?.split("===LSBLK===")[0]
+      ?.trim();
+
+    const hostIP = hostIpRaw || "NA";
+
+    console.log("PARSED HOST IP RAW:", hostIpRaw);
+    console.log("FINAL HOST IP:", hostIP);
+
     const lsblkRaw = logs.split("===LSBLK===")[1].split("===CEPH===")[0].trim();
     const cephRaw = logs.split("===CEPH===")[1].trim();
+
+    console.log("LSBLK RAW LENGTH:", lsblkRaw.length);
+    console.log("CEPH RAW LENGTH:", cephRaw.length);
 
     const lsblk = JSON.parse(lsblkRaw);
 
@@ -576,46 +625,60 @@ ceph-volume raw list || true;
     const cephMap = {};
     try {
       const cephJson = JSON.parse(cephRaw);
+
       Object.values(cephJson).forEach(e => {
-        if (e.device) cephMap[e.device] = e.osd_id;
+        if (e.device) {
+          cephMap[e.device] = e.osd_id;
+        }
       });
-    } catch {}
 
-    // ---------------- ACTIVE OSD ----------------
+      console.log("CEPH MAP:", cephMap);
+    } catch (e) {
+      console.log("CEPH PARSE FAILED:", e.message);
+    }
+
+    // ---------------- OSD TREE ----------------
     const osdTree = await execInToolbox(["ceph", "osd", "tree"]);
-    const activeOsds = [];
 
+    const osdInfo = {};
     osdTree.stdout.split("\n").forEach(line => {
       if (line.includes("osd.")) {
         const parts = line.trim().split(/\s+/);
         const id = parseInt(parts[0]);
-        const status = parts[4];
-        if (status === "up") activeOsds.push(id);
+
+        osdInfo[id] = {
+          status: parts[4] || "NA",
+          in_out:
+            (parts[5] === "0" || parts[5] === "0.00000")
+              ? "out"
+              : "in",
+        };
       }
     });
 
-    // ---------------- HELPERS ----------------
+    console.log("OSD INFO:", osdInfo);
 
+    // ---------------- HELPERS ----------------
     const isLoopDevice = (name) =>
       name.startsWith("loop") ||
       name.startsWith("nbd") ||
       name.startsWith("rbd");
 
-    const getAllMounts = (nodes) => {
-      let mounts = [];
-      for (const n of nodes || []) {
-        if (n.mountpoint) mounts.push(n.mountpoint);
-        if (n.children) mounts = mounts.concat(getAllMounts(n.children));
+    const getMounts = (nodes = []) => {
+      let m = [];
+      for (const n of nodes) {
+        if (n.mountpoint) m.push(n.mountpoint);
+        if (n.children) m = m.concat(getMounts(n.children));
       }
-      return mounts;
+      return m;
     };
 
     const isOSDisk = (mounts, children) => {
-      const cleanMounts = mounts.filter(m =>
+      const clean = mounts.filter(m =>
         !["/etc/resolv.conf", "/etc/hostname", "/etc/hosts"].includes(m)
       );
 
-      const hasBoot = cleanMounts.some(m =>
+      const hasBoot = clean.some(m =>
         m === "/" || m.startsWith("/boot")
       );
 
@@ -626,8 +689,9 @@ ceph-volume raw list || true;
       return hasBoot || hasLVM;
     };
 
-    // ---------------- MAIN ----------------
+    const getSerial = (disk) => disk.serial || "NA";
 
+    // ---------------- MAIN LOGIC ----------------
     const result = [];
 
     for (const disk of lsblk.blockdevices) {
@@ -638,11 +702,11 @@ ceph-volume raw list || true;
 
       const path = "/dev/" + disk.name;
       const children = disk.children || [];
-      const mounts = getAllMounts(children);
+      const mounts = getMounts(children);
 
       const osdId = cephMap[path];
       const isCeph = osdId !== undefined;
-      const isActive = isCeph && activeOsds.includes(osdId);
+      const isActive = isCeph && osdInfo[osdId]?.status === "up";
 
       const osDisk = isOSDisk(mounts, children);
       const hasPartitions = children.length > 0;
@@ -663,19 +727,24 @@ ceph-volume raw list || true;
         status = "STALE";
         reason = `Old Ceph data (OSD ${osdId})`;
       }
-      else if (hasPartitions || hasFS) {
+      else if (hasPartitions && hasFS) {
         status = "DIRTY";
-        reason = "Has partitions / filesystem";
+        reason = "Disk has both partitions and data (needs cleaning)";
+      }
+      else if (hasPartitions) {
+        status = "DIRTY";
+        reason = "Disk contains partitions (needs cleaning)";
+      }
+      else if (hasFS) {
+        status = "DIRTY";
+        reason = "Disk has data (needs cleaning)";
       }
 
-      // DEBUG (keep for production troubleshooting)
       console.log("DISK DEBUG:", {
         disk: disk.name,
-        path,
         mounts,
-        children: children.map(c => c.name),
         osDisk,
-        isCeph,
+        osdId,
         isActive,
         status
       });
@@ -685,11 +754,17 @@ ceph-volume raw list || true;
         path,
         size: disk.size,
         status,
-        reason
+        reason,
+        serial: getSerial(disk),
+        host_ip: hostIP,
+        osd_id: osdId ?? "NA",
+        osd_status: osdInfo[osdId]?.status || "NA",
+        osd_state: osdInfo[osdId]?.in_out || "NA",
       });
+      console.log(result,"-------------------");
     }
 
-    // ---------------- RESPONSE ----------------
+    console.log("FINAL RESULT:", result);
 
     return res.json({
       status: "success",
@@ -705,6 +780,7 @@ ceph-volume raw list || true;
     });
 
   } catch (err) {
+    console.error("ERROR:", err);
     return res.status(500).json({
       status: "failed",
       error: err.message
@@ -738,6 +814,8 @@ app.post("/api/disk/clean-osd", async (req, res) => {
             nodeName: node,
             restartPolicy: "Never",
             hostPID: true,
+            hostNetwork: true,
+            hostIPC: true,
             containers: [
               {
                 name: "cleaner",
@@ -749,27 +827,39 @@ app.post("/api/disk/clean-osd", async (req, res) => {
                   "/bin/bash",
                   "-c",
                   `
-echo "=================================="
-echo "Starting Disk Cleanup"
-echo "Disk: ${disk}"
-echo "=================================="
+echo "Starting Deep Disk Cleanup on ${disk}"
 
-echo "[1/4] Zapping partition table..."
+# Improved unmount logic: 
+# We use 'nsenter' to run the unmount command in the HOST's mount namespace (PID 1)
+echo "[1/7] Forcefully unmounting from Host Namespace..."
+nsenter -t 1 -m -u -i -n -p -- umount -l ${disk} || true
+nsenter -t 1 -m -u -i -n -p -- umount -l ${disk}* || true
+
+# Check if it worked
+if grep -q "${disk}" /proc/1/mounts; then
+    echo "ERROR: Disk is still mounted on host. Cleanup will fail."
+else
+    echo "Success: Disk unmounted."
+fi
+
+echo "[2/7] Removing LVM..."
+pvremove -y -ff ${disk}* || true
+
+echo "[3/7] Zapping..."
 sgdisk --zap-all ${disk}
+sgdisk --clear --mbrtogpt ${disk}
 
-echo "[2/4] Removing filesystem signatures..."
-wipefs -a ${disk}
+echo "[4/7] Wipefs..."
+wipefs -a ${disk} || wipefs -f -a ${disk}
 
-echo "[3/4] Discarding blocks..."
+echo "[5/7] Partprobe..."
+partprobe ${disk}
+
+echo "[6/7] Blkdiscard..."
 blkdiscard ${disk} || true
 
-echo "[4/4] Verifying disk..."
+echo "[7/7] Verification..."
 lsblk ${disk}
-
-echo "=================================="
-echo "Disk cleanup completed successfully"
-echo "Ready for new OSD"
-echo "=================================="
                   `
                 ],
                 volumeMounts: [
